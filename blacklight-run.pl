@@ -75,14 +75,14 @@ my $uab = LWP::UserAgent->new(
 
 foreach my $page (@pages_to_try) {
   my $url = URI->new($page);
-  $progress->update('message' => "Doing $page");
+  $progress->update('message' => "Doing $url");
   unless ( $tried{$url->canonical}) {
 	 my $res = $ua->get($url);
 	 $tried{$url->canonical} = 1;
 	 if ($res->is_success) {
 		my $content_file_str = '';
 		if ($cfg->{'content_dir'}) {
-		  my $dir = path($cfg->{'content_dir'}, $url->authority)->mkdir;
+		  my $dir = path($cfg->{'content_dir'}, $run_id, $url->authority)->mkdir;
 		  my $content_file = $dir->path('content.html');
 		  $content_file->spew_utf8($res->decoded_content);
 		  $content_file_str = $content_file->absolute->canonpath;
@@ -93,6 +93,7 @@ foreach my $page (@pages_to_try) {
 
 		unless ($blres->header('Content-type') eq 'application/json') {
 		  print STDERR "Didn't get JSON response for $url\n";
+		  print STDERR $blres->decoded_content;
 		  next;
 		}
 		my $ins = decode_json($blres->decoded_content);
@@ -146,7 +147,7 @@ foreach my $page (@pages_to_try) {
  		my $sth = $dbh->prepare($stmt) or die $dbh->errstr;;
  		$sth->execute(@bind);
 
-		
+		sleep(5);
 	 }
   }
 }
