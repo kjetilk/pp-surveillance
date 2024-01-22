@@ -8,13 +8,16 @@ use JSON;
 use Path::Tiny;
 use List::Util qw(any);
 use LWP::UserAgent;
-use Term::ProgressBar;
 use Config::Any;
 use DBI;
 use SQL::Abstract;
 use Switch;
 
 use Data::Dumper;
+
+use Progress::Any '$progress';
+use Progress::Any::Output;
+Progress::Any::Output->set('TermProgressBarColor');
 
 
 # Will load multiple configs, but I assume that we have only one:
@@ -33,6 +36,9 @@ my @sektorkoder = @{$cfg->{'sector_codes'}};
 my $dbh = DBI->connect(@{$cfg->{'dbi_config'}}, {AutoCommit => 1, mysql_enable_utf8 => 1});
 my $sql = SQL::Abstract->new;
 
+my ($run_id) = $dbh->selectrow_array('SELECT max(run_id) FROM sitevisits');
+$run_id++;
+
 my $ua = LWP::UserAgent->new(
 									  agent => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
 									  from => 'kjetil@kjernsmo.net',
@@ -45,7 +51,6 @@ if ($cfg->{'page_list'}) {
   @pages_to_try = $file_pl->lines;
 }
 
-my %homepages;
 my %tried;
 my $i=0;
 foreach my $org (@{$data}) {
@@ -60,7 +65,8 @@ foreach my $org (@{$data}) {
   }
 }
 
-my $progress = Term::ProgressBar->new ({count => scalar(@pages_to_try)});
+
+$progress->target(scalar(@pages_to_try));
 
 my $uab = LWP::UserAgent->new(
 									  from => 'kjetil@kjernsmo.net',
@@ -69,6 +75,7 @@ my $uab = LWP::UserAgent->new(
 
 foreach my $page (@pages_to_try) {
   my $url = URI->new($page);
+  $progress->update('message' => "Doing $page");
   unless ( $tried{$url->canonical}) {
 	 my $res = $ua->get($url);
 	 $tried{$url->canonical} = 1;
@@ -83,15 +90,27 @@ foreach my $page (@pages_to_try) {
 		my $blres = $uab->post($cfg->{'blacklight_api'},
 									  'Content-Type' => 'application/json',
 									  Content => '{ "inUrl": "'.$url.'", "location": "EU", "device": "desktop" }');
+
+		unless ($blres->header('Content-type') eq 'application/json') {
+		  print STDERR "Didn't get JSON response for $url\n";
+		  next;
+		}
 		my $ins = decode_json($blres->decoded_content);
+
 		my %inserts = (
-							'run_id' => 1,
+							'run_id' => $run_id,
 							'site' => "$url",
 							'status' => $ins->{'status'},
 							'dest' => $ins->{'uri_dest'},
-							'num_third_party_requests' => scalar @{$ins->{'hosts'}->{'requests'}->{'third_party'}},
 							'data_archive' => $content_file_str
 						  );
+
+		if ($ins->{'hosts'}
+			 && $ins->{'hosts'}->{'requests'}
+			 && $ins->{'hosts'}->{'requests'}->{'third_party'}) {
+		  $inserts{'num_third_party_requests'} = scalar @{$ins->{'hosts'}->{'requests'}->{'third_party'}};
+		}
+
 		
 		# Find correct cards
 		my @cards;
@@ -101,7 +120,7 @@ foreach my $page (@pages_to_try) {
 			 last;
 		  }
 		}
-		die "Couldn't find reportcards" unless @cards;
+		print STDERR "Couldn't find reportcards for $url\n" unless @cards;
 
 		foreach my $card (@cards) {
 		  switch($card->{'cardType'}) {
@@ -123,8 +142,6 @@ foreach my $page (@pages_to_try) {
 		}
 
 		my($stmt, @bind) = $sql->insert('sitevisits', \%inserts);
-		warn $stmt;
-		warn Dumper \@bind;
 
  		my $sth = $dbh->prepare($stmt) or die $dbh->errstr;;
  		$sth->execute(@bind);
@@ -132,7 +149,6 @@ foreach my $page (@pages_to_try) {
 		
 	 }
   }
-  $progress->update($i);
 }
 
 $dbh->disconnect;
