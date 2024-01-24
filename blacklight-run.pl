@@ -94,6 +94,9 @@ foreach my $page (@pages_to_try) {
 		unless ($blres->header('Content-type') eq 'application/json') {
 		  print STDERR "Didn't get JSON response for $url\n";
 		  print STDERR $blres->decoded_content;
+		  my $sthe = $dbh->prepare('INSERT INTO sitevisits (run_id, site, status) VALUES (?, ?, ?)') or die $dbh->errstr;;
+		  $sthe->execute($run_id, "$url", 'no-json');
+
 		  next;
 		}
 		my $ins = decode_json($blres->decoded_content);
@@ -147,7 +150,7 @@ foreach my $page (@pages_to_try) {
  		my $sth = $dbh->prepare($stmt) or die $dbh->errstr;;
  		$sth->execute(@bind);
 
-		sleep(5);
+		sleep(10);
 	 }
   }
 }
